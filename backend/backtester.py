@@ -10,7 +10,7 @@ from schemas import (
     SignalDirection, Timeframe, Signal, StrategyType,
     BacktestTrade, BacktestResult, BacktestConfig,
 )
-from config.settings import TRADING_CONFIG, MT5_CONFIG
+from config.settings import TRADING_CONFIG
 import uuid
 
 logger = logging.getLogger(__name__)

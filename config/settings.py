@@ -41,19 +41,6 @@ class OandaConfig:
 
 
 @dataclass
-class MT5Config:
-    symbol: str = "GOLD"
-    timeframes: List[str] = None
-    account_login: int = 336239416
-    password: str = "#IMeagle2005"
-    server: str = "XMGlobal-mt5"
-
-    def __post_init__(self):
-        if self.timeframes is None:
-            self.timeframes = ["M5", "M15", "H1"]
-
-
-@dataclass
 class TradingConfig:
     account_balance: float = 5000.0
     risk_per_trade_pct: float = 1.0
@@ -96,6 +83,5 @@ class AppConfig:
 
 
 OANDA_CONFIG = OandaConfig()
-MT5_CONFIG = MT5Config()
 TRADING_CONFIG = TradingConfig()
 APP_CONFIG = AppConfig()
