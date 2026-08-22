@@ -6,7 +6,8 @@ import sys
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -23,7 +24,7 @@ from signal_manager import SignalManager
 from trade_history import trade_history
 from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig
 from indicators import calculate_all_indicators, ema_slope, is_price_near_ema
-from backtester import run_backtest, run_multi_backtest
+from backtester import run_backtest, run_multi_backtest, run_vector_backtest
 from config.settings import APP_CONFIG, TRADING_CONFIG
 
 logging.basicConfig(
@@ -673,24 +674,135 @@ def on_signal_closed(signal: Signal):
 signal_manager.on_signal_closed(on_signal_closed)
 
 
+class BacktestRequest(BaseModel):
+    days: int = Field(default=30, ge=1, le=90)
+    account_balance: Optional[float] = Field(default=None, gt=0)
+    fixed_units: Optional[float] = Field(default=None, gt=0)
+
+
+def _fetch_backtest_frames(days: int):
+    """Fetch H1/M15/M5 frames covering `days` + indicator warmup."""
+    dc = get_data_client()
+    if not dc.connected:
+        return None, None, None
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days + 15)  # 15d warmup for H1 EMA200/slope
+    h1 = dc.get_candles_range(Timeframe.H1, start, now)
+    m15 = dc.get_candles_range(Timeframe.M15, start, now)
+    m5 = dc.get_candles_range(Timeframe.M5, start, now)
+    if h1 is None or m15 is None or m5 is None:
+        return None, None, None
+    return h1, m15, m5
+
+
+def _vector_result_to_response(res: dict, by_strategy: bool = True) -> dict:
+    pf = res.get("profit_factor", 0.0)
+    wins = res.get("win_count", 0)
+    losses = res.get("total_trades", 0) - wins
+    out = {
+        "total_trades": res.get("total_trades", 0),
+        "win_count": wins,
+        "loss_count": losses,
+        "win_rate": res.get("win_rate", 0.0),
+        "total_pnl": res.get("total_pnl", 0.0),
+        "avg_rr": res.get("avg_rr", 0.0),
+        "max_drawdown": res.get("max_drawdown", 0.0),
+        "profit_factor": min(pf, 999.99) if pf == float("inf") else pf,
+        "avg_bars_held": 0.0,
+        "trades": [
+            {
+                "entry_time": str(t["entry_time"]),
+                "exit_time": str(t.get("exit_time")),
+                "direction": t["direction"],
+                "entry": t["entry"],
+                "result": t["result"],
+                "pnl_dollars": t["pnl_dollars"],
+                "rr_achieved": t["rr"],
+            }
+            for t in res.get("trades", [])
+        ],
+        "by_strategy": {},
+    }
+    if by_strategy and out["total_trades"]:
+        out["by_strategy"] = {
+            "ema_pullback": {
+                "trades": out["total_trades"],
+                "wins": wins,
+                "pnl": out["total_pnl"],
+            }
+        }
+    return out
+
+
 @app.post("/api/backtest")
-async def backtest():
-    result = run_backtest()
-    return result.model_dump()
+async def backtest(request: Optional[BacktestRequest] = None):
+    req = request or BacktestRequest()
+    cfg = TRADING_CONFIG
+    balance = req.account_balance or cfg.account_balance
+    risk_dollars = (
+        balance * cfg.risk_per_trade_pct / 100.0
+        if req.fixed_units is None
+        else None
+    )
+    h1, m15, m5 = _fetch_backtest_frames(req.days)
+    if h1 is None:
+        raise HTTPException(status_code=503, detail="Data source unavailable")
+    entry_start = datetime.now(timezone.utc) - timedelta(days=req.days)
+    res = run_vector_backtest(
+        h1, m15, m5,
+        sl_mult=cfg.sl_atr_multiplier,
+        tp1_rr=cfg.tp1_rr,
+        tp2_rr=cfg.tp2_rr,
+        rsi_cross_bars=cfg.rsi_cross_bars,
+        require_engulfing=cfg.require_engulfing,
+        session_windows=cfg.session_windows,
+        risk_dollars=risk_dollars,
+        fixed_units=req.fixed_units,
+        entry_start=entry_start,
+        account_balance=balance,
+    )
+    return _vector_result_to_response(res)
 
 
 @app.post("/api/backtest/multi")
-async def backtest_multi():
+async def backtest_multi(request: Optional[BacktestRequest] = None):
+    req = request or BacktestRequest()
+    cfg = TRADING_CONFIG
+    balance = req.account_balance or cfg.account_balance
+    risk_dollars = (
+        balance * cfg.risk_per_trade_pct / 100.0
+        if req.fixed_units is None
+        else None
+    )
+    h1, m15, m5 = _fetch_backtest_frames(req.days)
+    if h1 is None:
+        raise HTTPException(status_code=503, detail="Data source unavailable")
     param_sets = [
-        {"sl_atr_multiplier": 1.0},
-        {"sl_atr_multiplier": 1.5},
-        {"sl_atr_multiplier": 2.0},
-        {"tp1_rr": 1.5, "tp2_rr": 2.5},
-        {"tp1_rr": 2.0, "tp2_rr": 3.0},
-        {"tp1_rr": 2.5, "tp2_rr": 4.0},
+        {},
+        {"sl_mult": 1.0},
+        {"sl_mult": 2.0},
+        {"tp1_rr": cfg.tp1_rr * 0.75, "tp2_rr": cfg.tp2_rr * 0.75},
+        {"tp1_rr": cfg.tp1_rr * 1.25, "tp2_rr": cfg.tp2_rr * 1.25},
+        {"rsi_cross_bars": 1},
     ]
-    results = run_multi_backtest(param_sets)
-    return [r.model_dump() for r in results]
+    results = []
+    entry_start = datetime.now(timezone.utc) - timedelta(days=req.days)
+    for overrides in param_sets:
+        res = run_vector_backtest(
+            h1, m15, m5,
+            sl_mult=overrides.get("sl_mult", cfg.sl_atr_multiplier),
+            tp1_rr=overrides.get("tp1_rr", cfg.tp1_rr),
+            tp2_rr=overrides.get("tp2_rr", cfg.tp2_rr),
+            rsi_cross_bars=overrides.get("rsi_cross_bars", cfg.rsi_cross_bars),
+            require_engulfing=cfg.require_engulfing,
+            session_windows=cfg.session_windows,
+            risk_dollars=risk_dollars,
+            fixed_units=req.fixed_units,
+            entry_start=entry_start,
+            account_balance=balance,
+        )
+        results.append(_vector_result_to_response(res, by_strategy=False))
+    return results
 
 
 @app.get("/api/backtest/status")
