@@ -22,10 +22,11 @@ from oanda_stream import get_price_stream
 from strategy import scan_for_signal, check_session_filter
 from signal_manager import SignalManager
 from trade_history import trade_history
+from telegram_notifier import send_telegram, format_new_signal, format_signal_closed
 from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig
 from indicators import calculate_all_indicators, ema_slope, is_price_near_ema
 from backtester import run_backtest, run_multi_backtest, run_vector_backtest
-from config.settings import APP_CONFIG, TRADING_CONFIG
+from config.settings import APP_CONFIG, TRADING_CONFIG, TELEGRAM_CONFIG
 
 logging.basicConfig(
     level=logging.INFO,
@@ -491,6 +492,7 @@ async def scan_and_generate_signals():
                 "type": "NEW_SIGNAL",
                 "signal": signal_to_dict(signal),
             })
+            await send_telegram(format_new_signal(signal))
     except Exception as e:
         logger.error(f"Error scanning for signals: {e}")
 
@@ -669,9 +671,18 @@ def on_signal_closed(signal: Signal):
         "type": "SIGNAL_CLOSED",
         "signal": signal_to_dict(signal),
     }))
+    asyncio.create_task(send_telegram(format_signal_closed(signal)))
 
 
 signal_manager.on_signal_closed(on_signal_closed)
+
+
+@app.post("/api/telegram/test")
+async def telegram_test():
+    if not TELEGRAM_CONFIG.enabled:
+        raise HTTPException(status_code=503, detail="Telegram not configured")
+    await send_telegram("\U00002705 DAvynci backend online \u2014 signal alerts active.")
+    return {"sent": True}
 
 
 class BacktestRequest(BaseModel):

@@ -82,6 +82,21 @@ class AppConfig:
     candle_history_bars: int = 500
 
 
+@dataclass
+class TelegramConfig:
+    bot_token: str = ""
+    chat_id: str = ""
+
+    def __post_init__(self):
+        self.bot_token = self.bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        self.chat_id = self.chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
+
+
 OANDA_CONFIG = OandaConfig()
 TRADING_CONFIG = TradingConfig()
 APP_CONFIG = AppConfig()
+TELEGRAM_CONFIG = TelegramConfig()
