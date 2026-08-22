@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime, timezone
-from typing import Set, Tuple
+from typing import Optional, Set, Tuple
 
 import requests
 
@@ -54,7 +54,8 @@ def check_session_opens(session_windows, now: datetime = None) -> list:
         if now.hour == start:
             _fired.add(key)
             alerts.append(
-                f"{flag} <b>{name} SESSION OPEN</b> \u2014 XAUUSD\n\n"
+                f"\U0001F4F1 @davynci00\n"
+                f"{flag} <b>{name} SESSION JUST OPENED</b> \u2014 XAUUSD\n\n"
                 f"\u2022 Signal window: <code>{start:02d}:00\u2013{end:02d}:00 GMT</code>\n"
                 f"\u2022 Scanning for EMA pullback entries until {end:02d}:00 GMT"
             )
@@ -62,6 +63,29 @@ def check_session_opens(session_windows, now: datetime = None) -> list:
     cutoff = now.strftime("%Y-%m-%d")
     _fired.difference_update(k for k in _fired if k[0] < cutoff)
     return alerts
+
+
+def announce_if_session_active(session_windows, now: datetime = None) -> Optional[str]:
+    """On backend startup/wake: if inside an active session window, announce it."""
+    now = now or datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return None
+    today = now.strftime("%Y-%m-%d")
+    for window in session_windows:
+        name, flag = SESSION_NAMES.get(window, (f"SESSION {window}", ""))
+        start, end = window
+        key = (today, start)
+        if key in _fired:
+            continue
+        if start <= now.hour < end:
+            _fired.add(key)
+            return (
+                f"\U0001F4F1 @davynci00\n"
+                f"{flag} <b>{name} SESSION IS OPEN</b> \u2014 XAUUSD\n\n"
+                f"\u2022 Opened at {start:02d}:00 GMT \u2014 ends {end:02d}:00 GMT\n"
+                f"\u2022 Scanning for EMA pullback entries"
+            )
+    return None
 
 
 async def session_watch_loop(session_windows):
@@ -75,7 +99,8 @@ async def session_watch_loop(session_windows):
         await asyncio.sleep(60)
 
 
-async def send_alert(text: str) -> None:
+async def send_alert(text: str) -> bool:
     if not TELEGRAM_CONFIG.enabled:
-        return
-    await asyncio.to_thread(_post_message, text)
+        return False
+    result = await asyncio.to_thread(_post_message, text)
+    return result

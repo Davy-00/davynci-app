@@ -23,7 +23,7 @@ from strategy import scan_for_signal, check_session_filter
 from signal_manager import SignalManager
 from trade_history import trade_history
 from telegram_notifier import send_telegram, format_new_signal, format_signal_closed
-from session_notifier import session_watch_loop
+from session_notifier import session_watch_loop, announce_if_session_active, send_alert
 from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig
 from indicators import calculate_all_indicators, ema_slope, is_price_near_ema
 from backtester import run_backtest, run_multi_backtest, run_vector_backtest
@@ -553,6 +553,10 @@ async def lifespan(app: FastAPI):
     stream.start()
 
     asyncio.create_task(data_updater())
+    startup_alert = announce_if_session_active(TRADING_CONFIG.session_windows)
+    if startup_alert:
+        asyncio.create_task(send_alert(startup_alert))
+        logger.info("Startup session alert queued")
     session_task = asyncio.create_task(
         session_watch_loop(TRADING_CONFIG.session_windows)
     )
