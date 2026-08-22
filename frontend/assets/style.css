@@ -1,0 +1,206 @@
+/* Custom TradingView Dark Theme */
+body {
+    background-color: #131722 !important;
+    color: #d1d4dc !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1e222d;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #2a2e39;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #363a45;
+}
+
+/* Bootstrap overrides */
+.navbar-dark {
+    background-color: #1e222d !important;
+}
+
+.btn-outline-secondary {
+    border-color: #2a2e39 !important;
+    color: #787b86 !important;
+}
+
+.btn-outline-secondary:hover,
+.btn-outline-secondary.active {
+    background-color: #2a2e39 !important;
+    border-color: #2196f3 !important;
+    color: #d1d4dc !important;
+}
+
+/* Card styling */
+.card {
+    background-color: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+}
+
+.card-header {
+    background-color: #1e222d !important;
+    border-bottom: 1px solid #2a2e39 !important;
+    color: #d1d4dc !important;
+}
+
+/* Table styling */
+.table {
+    color: #d1d4dc !important;
+    background-color: transparent !important;
+}
+
+.table th {
+    border-bottom: 1px solid #2a2e39 !important;
+    color: #787b86 !important;
+    font-weight: 500;
+}
+
+.table td {
+    border-bottom: 1px solid #2a2e39 !important;
+}
+
+/* Badge styling */
+.badge {
+    font-weight: 500;
+}
+
+/* Plotly chart styling */
+.js-plotly-plot .plotly .modebar {
+    background-color: rgba(30, 34, 45, 0.8) !important;
+    border-radius: 4px;
+}
+
+.js-plotly-plot .plotly .modebar-btn {
+    color: #787b86 !important;
+}
+
+.js-plotly-plot .plotly .modebar-btn:hover {
+    color: #d1d4dc !important;
+}
+
+/* Modal styling */
+.modal-content {
+    background-color: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+    color: #d1d4dc !important;
+}
+
+.modal-header {
+    border-bottom: 1px solid #2a2e39 !important;
+}
+
+.modal-footer {
+    border-top: 1px solid #2a2e39 !important;
+}
+
+/* Input styling */
+.form-control {
+    background-color: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+    color: #d1d4dc !important;
+}
+
+.form-control:focus {
+    background-color: #1e222d !important;
+    border-color: #2196f3 !important;
+    color: #d1d4dc !important;
+    box-shadow: 0 0 0 0.2rem rgba(33, 150, 243, 0.25) !important;
+}
+
+/* Dropdown styling */
+.Select-control {
+    background-color: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+}
+
+.Select-value-label {
+    color: #d1d4dc !important;
+}
+
+.Select-menu-outer {
+    background-color: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+}
+
+.Select-option {
+    color: #d1d4dc !important;
+    background-color: #1e222d !important;
+}
+
+.Select-option:hover {
+    background-color: #2a2e39 !important;
+}
+
+/* Alert styling */
+.alert {
+    border: none !important;
+}
+
+.alert-info {
+    background-color: rgba(33, 150, 243, 0.1) !important;
+    color: #2196f3 !important;
+}
+
+.alert-success {
+    background-color: rgba(38, 166, 154, 0.1) !important;
+    color: #26a69a !important;
+}
+
+.alert-warning {
+    background-color: rgba(255, 152, 0, 0.1) !important;
+    color: #ff9800 !important;
+}
+
+.alert-danger {
+    background-color: rgba(239, 83, 80, 0.1) !important;
+    color: #ef5350 !important;
+}
+
+/* Animation for price updates */
+@keyframes price-flash-green {
+    0% { color: #26a69a; }
+    50% { color: #4caf50; }
+    100% { color: #26a69a; }
+}
+
+@keyframes price-flash-red {
+    0% { color: #ef5350; }
+    50% { color: #f44336; }
+    100% { color: #ef5350; }
+}
+
+.price-up {
+    animation: price-flash-green 0.5s ease;
+}
+
+.price-down {
+    animation: price-flash-red 0.5s ease;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .navbar-brand {
+        font-size: 1rem;
+    }
+    
+    #live-bid,
+    #live-ask {
+        font-size: 18px !important;
+    }
+    
+    #main-chart {
+        height: 50vh !important;
+    }
+}

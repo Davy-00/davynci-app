@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XAUUSD Trade Analysis</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #131722; font-family: 'Segoe UI', sans-serif; color: #d1d4dc; }
+    #app { display: flex; flex-direction: column; height: 100%; }
+    #toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #1e222d; border-bottom: 1px solid #2a2e39; flex-shrink: 0; }
+    #toolbar .tf-btn { background: transparent; border: 1px solid #2a2e39; color: #787b86; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+    #toolbar .tf-btn.active { color: #2196f3; border-color: #2196f3; }
+    #toolbar .label { color: #787b86; font-size: 11px; margin-right: 4px; }
+    #main { display: flex; flex: 1; overflow: hidden; }
+    #chart-wrap { flex: 1; position: relative; overflow: hidden; }
+    #chart { width: 100%; height: 100%; }
+    #sidebar { width: 280px; background: #1e222d; border-left: 1px solid #2a2e39; display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
+    #sidebar .section { padding: 10px 12px; border-bottom: 1px solid #2a2e39; }
+    #sidebar .section h3 { font-size: 12px; color: #787b86; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .info-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+    .info-row .val { font-weight: 600; }
+    .info-row .val.bull { color: #26a69a; }
+    .info-row .val.bear { color: #ef5350; }
+    .setup-card { background: #0d1b0e; border: 1px solid #26a69a; border-radius: 6px; padding: 10px; margin-top: 6px; }
+    .setup-card.bear { background: #1b0d0d; border-color: #ef5350; }
+    .setup-card.neutral { background: #1e222d; border-color: #2a2e39; }
+    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #1e222d; border: 1px solid #2a2e39; padding: 10px 20px; border-radius: 6px; font-size: 13px; display: none; z-index: 100; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: #131722; }
+    ::-webkit-scrollbar-thumb { background: #2a2e39; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <span class="label">TF:</span>
+    <button class="tf-btn" data-tf="M5">M5</button>
+    <button class="tf-btn active" data-tf="M15">M15</button>
+    <button class="tf-btn" data-tf="H1">H1</button>
+    <span style="margin:0 8px;color:#2a2e39;">|</span>
+    <span id="price-display" style="font-size:14px;font-weight:700;color:#26a69a;">--</span>
+    <span id="data-source" style="font-size:10px;color:#787b86;margin-left:auto;background:#2a2e39;padding:2px 8px;border-radius:3px;">--</span>
+  </div>
+  <div id="main">
+    <div id="chart-wrap">
+      <div id="chart"></div>
+    </div>
+    <div id="sidebar">
+      <div class="section">
+        <h3>📊 Market</h3>
+        <div id="market-info"><div class="info-row"><span>Loading...</span></div></div>
+      </div>
+      <div class="section">
+        <h3>🎯 Auto Setup</h3>
+        <div id="suggestion-content"><div style="color:#787b86;font-size:11px;">Analyzing market...</div></div>
+      </div>
+      <div class="section">
+        <h3>📈 Technicals</h3>
+        <div id="technicals-content"><div class="info-row"><span>H1 Trend</span><span>--</span></div></div>
+      </div>
+      <div class="section" style="border-bottom:none;">
+        <h3>📜 Narrative</h3>
+        <div id="narrative-content" style="font-size:11px;color:#787b86;line-height:1.5;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  layout: { background: { color: '#131722' }, textColor: '#d1d4dc' },
+  grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal,
+    vertLine: { color: '#787b86', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#1e222d' },
+    horzLine: { color: '#787b86', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#1e222d' } },
+  timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: '#2a2e39' },
+  autosize: true,
+});
+
+const candleSeries = chart.addCandlestickSeries({
+  upColor: '#26a69a', downColor: '#ef5350',
+  borderUpColor: '#26a69a', borderDownColor: '#ef5350',
+  wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+});
+const ema21S = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+const ema50S = chart.addLineSeries({ color: '#ff9800', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+const ema200S = chart.addLineSeries({ color: '#ffffff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
+let backendTrendLines = [];
+
+function getTF() { return new URLSearchParams(window.location.search).get('tf') || 'M15'; }
+
+async function fetchData() {
+  try {
+    const tf = getTF();
+    const r = await fetch(`http://127.0.0.1:8051/api/chart/${tf}`);
+    const data = await r.json();
+    if (data.error) return;
+    const candles = data.candles || [];
+    const indicators = data.indicators || {};
+
+    if (candles.length === 0) return;
+    const cData = candles.map(c => ({ time: Math.floor(new Date(c.time).getTime() / 1000), open: c.open, high: c.high, low: c.low, close: c.close }));
+    candleSeries.setData(cData);
+
+    const times = cData.map(c => c.time);
+    ['ema_21','ema_50','ema_200'].forEach((name, i) => {
+      const vals = indicators[name] || [];
+      const s = [ema21S, ema50S, ema200S][i];
+      if (vals.length === times.length) s.setData(vals.map((v, j) => ({ time: times[j], value: v })));
+    });
+
+    // Backend trend lines
+    backendTrendLines.forEach(s => chart.removeSeries(s));
+    backendTrendLines = [];
+    (indicators.trend_lines || []).forEach(tl => {
+      if (tl.start_idx >= times.length || tl.end_idx >= times.length) return;
+      const color = tl.type === 'uptrend' ? '#4caf50' : '#f44336';
+      const ls = tl.is_broken ? LightweightCharts.LineStyle.Dotted : LightweightCharts.LineStyle.Solid;
+      const line = chart.addLineSeries({ color, lineWidth: Math.min(3,Math.max(1,tl.touches-1)), lineStyle: ls, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      line.setData([{ time: times[tl.start_idx], value: tl.start_price }, { time: times[tl.end_idx], value: tl.end_price }]);
+      backendTrendLines.push(line);
+    });
+
+    // Price display
+    const price = data.current_price;
+    if (price) {
+      const p = price.bid;
+      document.getElementById('price-display').textContent = `$${p.toFixed(2)}`;
+      document.getElementById('price-display').style.color = p > (cData[cData.length-1]?.open || 0) ? '#26a69a' : '#ef5350';
+    }
+
+    // Data source
+    document.getElementById('data-source').textContent = `${data.instrument || 'GC=F'} via ${data.data_source || 'yfinance'}`;
+
+    // Market info
+    const a = data.analysis || {};
+    const h1 = a.h1 || {}; const m15 = a.m15 || {}; const m5 = a.m5 || {};
+    document.getElementById('market-info').innerHTML = `
+      <div class="info-row"><span>H1</span><span class="val ${h1.trend === 'UPTREND' ? 'bull' : (h1.trend === 'DOWNTREND' ? 'bear' : '')}">${h1.trend || '?'}</span></div>
+      <div class="info-row"><span>M15 RSI</span><span class="val ${(m15.rsi_status||'').includes('OVB') ? 'bear' : ((m15.rsi_status||'').includes('OVS') ? 'bull' : '')}">${m15.rsi || '?'} ${m15.rsi_status || ''}</span></div>
+      <div class="info-row"><span>M5 Trend</span><span class="val ${m5.trend === 'BULL' ? 'bull' : 'bear'}">${m5.trend || '?'}</span></div>
+      <div class="info-row"><span>Pattern</span><span style="color:#ff9800">${m5.pattern !== 'NONE' ? m5.pattern : 'none'}</span></div>
+      <div class="info-row"><span>Session</span><span>${data.session_info?.current_session || '?'}</span></div>
+    `;
+
+    // Auto trade suggestion
+    const st = data.suggested_trade;
+    const sc = document.getElementById('suggestion-content');
+    if (st) {
+      const isBuy = st.direction === 'BUY';
+      const c = isBuy ? '#26a69a' : '#ef5350';
+      sc.innerHTML = `
+        <div style="font-size:14px;font-weight:700;color:${c};margin-bottom:4px;">${st.direction} ${st.side} (score ${st.bias_score})</div>
+        <div class="setup-card ${isBuy ? '' : 'bear'}">
+          <div class="info-row"><span>Entry</span><span class="val">$${st.entry}</span></div>
+          <div class="info-row"><span>Stop Loss</span><span class="val bear">$${st.stop_loss}</span></div>
+          <div class="info-row"><span>TP1</span><span class="val bull">$${st.tp1} <span style="color:#787b86;font-weight:400;">(R:R ${st.rr1})</span></span></div>
+          <div class="info-row"><span>TP2</span><span class="val bull">$${st.tp2} <span style="color:#787b86;font-weight:400;">(R:R ${st.rr2})</span></span></div>
+          <div class="info-row"><span>Risk</span><span class="val bear">$${st.risk}</span></div>
+        </div>`;
+    } else {
+      const concl = a.conclusion || '';
+      const isBull = concl.includes('BULL'); const isBear = concl.includes('BEAR');
+      const c = isBull ? '#26a69a' : (isBear ? '#ef5350' : '#787b86');
+      sc.innerHTML = `<div style="font-size:13px;color:${c};text-align:center;padding:10px;">${concl || 'Waiting for clear setup...'}</div>`;
+    }
+
+    // Technicals
+    document.getElementById('technicals-content').innerHTML = `
+      <div class="info-row"><span>H1 Trend</span><span class="val ${h1.trend === 'UPTREND' ? 'bull' : (h1.trend === 'DOWNTREND' ? 'bear' : '')}">${h1.trend || '?'}</span></div>
+      <div class="info-row"><span>H1 EMA200 Slope</span><span>${h1.ema200_slope || '?'}</span></div>
+      <div class="info-row"><span>Volatility</span><span>${a.volatility || '?'}</span></div>
+      <div class="info-row"><span>M5 RSI</span><span class="val ${m5.rsi > 70 ? 'bear' : (m5.rsi < 30 ? 'bull' : '')}">${m5.rsi || '?'}</span></div>
+    `;
+
+    // Narrative
+    const narrEl = document.getElementById('narrative-content');
+    if (a.narrative) {
+      narrEl.innerHTML = a.narrative.split('\n').filter(l=>l.trim()).map(l => `<div style="margin-bottom:4px;">${l}</div>`).join('');
+    } else {
+      narrEl.innerHTML = '<div style="color:#787b86;">No analysis available.</div>';
+    }
+
+  } catch (e) { console.error(e); }
+}
+
+// Toolbar TF switching
+document.querySelectorAll('[data-tf]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-tf]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tf = btn.dataset.tf;
+    const url = new URL(window.location);
+    url.searchParams.set('tf', tf);
+    window.history.replaceState({}, '', url);
+    fetchData();
+  });
+});
+
+// Init
+fetchData();
+setInterval(fetchData, 5000);
+setTimeout(() => chart.timeScale().fitContent(), 800);
+</script>
+</body>
+</html>

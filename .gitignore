@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*.log
+tmp/
+data/
+.vercel
+.venv/
+venv/
+.DS_Store
+MT5_5660_AVX2.zip
+backend/mt5_ea/
