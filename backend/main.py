@@ -443,6 +443,8 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
                 "angle": tl.angle,
                 "is_broken": tl.is_broken,
             })
+        draw_lines.sort(key=lambda d: d.get("strength") or 0, reverse=True)
+        draw_lines = draw_lines[:2]
         indicators_dict['trend_lines'] = draw_lines
         if 'breakout' in h1_indicators:
             indicators_dict['breakout'] = h1_indicators['breakout'].tail(200).tolist()
