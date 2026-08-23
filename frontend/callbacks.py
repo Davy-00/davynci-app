@@ -405,7 +405,7 @@ def get_ai_insight(n, question, timeframe):
         payload = {"timeframe": timeframe}
         if question:
             payload["question"] = question
-        response = requests.post(f"{API_BASE_URL}/api/ai/analyze", json=payload, timeout=55)
+        response = requests.post(f"{API_BASE_URL}/api/ai/analyze", json=payload, timeout=50)
         data = response.json()
         if "detail" in data or "error" in data:
             msg = data.get("detail") or data.get("error")
@@ -417,16 +417,13 @@ def get_ai_insight(n, question, timeframe):
             if not b:
                 continue
             color = TRADINGVIEW_COLORS.get("text", "#d1d4dc")
-            low = b.lower()
-            if low.startswith(("1)", "2)", "3)")) or b.startswith(("-", "•")):
-                paras.append(html.P(b, style={"color": color, "fontSize": "12px", "marginBottom": "6px"}))
-            else:
-                paras.append(html.P(b, style={"color": color, "fontSize": "12px", "margin": "0 0 6px"}))
+            paras.append(html.P(b, style={"color": color, "fontSize": "12px", "marginBottom": "6px"}))
         model = data.get("model", "")
         footer = html.P(f"— {model}", style={"color": TRADINGVIEW_COLORS["text_secondary"], "fontSize": "10px"})
         return [*paras, footer]
     except Exception as e:
-        return html.P(f"AI request failed: {type(e).__name__}", style={"color": TRADINGVIEW_COLORS["red"], "fontSize": "12px"})
+        return html.P("⏳ Timed out (backend may have been waking up). Click 'Get AI Insight' again — second try is fast.",
+                      style={"color": TRADINGVIEW_COLORS["orange"], "fontSize": "12px"})
 
 
 @callback(
