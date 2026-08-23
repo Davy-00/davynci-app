@@ -256,19 +256,20 @@ def create_history_table(trades):
 )
 def update_dashboard(n, timeframe):
     try:
-        response = requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=5)
+        response = requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=35)
         data = response.json()
     except Exception as e:
         return (
             "--", "--", "--",
             create_analysis_display({}),
-            html.P("Error loading data", style={"color": "red"}),
-            html.P("Error", style={"color": "red"}),
+            html.P("⏳ Backend waking up — first load takes ~40s on free hosting, charts appear automatically.",
+                   style={"color": "#f0b90b", "fontSize": "13px"}),
+            html.P("Waking…", style={"color": "#f0b90b"}),
             "",
             {"display": "none"},
             "0", "0%", "0", "$0", "$0",
-            html.P("Error loading history", style={"color": "red"}),
-            "Connection error",
+            html.P("Waiting for backend…", style={"color": "#f0b90b"}),
+            f"Waking backend ({type(e).__name__})",
         )
     
     if "error" in data:
