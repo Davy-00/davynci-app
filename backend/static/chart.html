@@ -97,7 +97,7 @@ function getTF() { return new URLSearchParams(window.location.search).get('tf') 
 async function fetchData() {
   try {
     const tf = getTF();
-    const r = await fetch(`http://127.0.0.1:8051/api/chart/${tf}`);
+    const r = await fetch(`/api/chart/${tf}`);
     const data = await r.json();
     if (data.error) return;
     const candles = data.candles || [];
