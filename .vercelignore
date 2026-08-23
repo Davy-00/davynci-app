@@ -1,0 +1,9 @@
+MT5_*.zip
+*.zip
+data/
+logs/
+tmp/
+.git/
+__pycache__/
+*.pyc
+.env
