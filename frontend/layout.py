@@ -1,6 +1,9 @@
 import dash_bootstrap_components as dbc
 from dash import html, dcc
 import dash
+import os
+
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8051")
 
 TRADINGVIEW_COLORS = {
     "bg": "#131722",
@@ -316,6 +319,56 @@ def create_backtest_panel():
     )
 
 
+def create_ai_panel():
+    return html.Div(
+        [
+            html.H5(
+                "AI Analyst",
+                style={
+                    "color": TRADINGVIEW_COLORS["text"],
+                    "borderBottom": f"1px solid {TRADINGVIEW_COLORS['border']}",
+                    "paddingBottom": "10px",
+                    "marginBottom": "15px",
+                },
+            ),
+            dcc.Textarea(
+                id="ai-question",
+                placeholder="Ask about this market… (optional)",
+                style={
+                    "width": "100%",
+                    "height": 48,
+                    "backgroundColor": TRADINGVIEW_COLORS["bg"],
+                    "color": TRADINGVIEW_COLORS["text"],
+                    "borderColor": TRADINGVIEW_COLORS["border"],
+                    "fontSize": "12px",
+                },
+            ),
+            dbc.Button(
+                "Get AI Insight",
+                id="btn-ai-analyze",
+                color="info",
+                size="sm",
+                className="w-100 my-2",
+            ),
+            html.Div(
+                id="ai-insight",
+                style={"fontSize": "12px", "maxHeight": "260px", "overflowY": "auto"},
+                children=[
+                    html.P("Gemini-powered read of the live chart.",
+                           style={"color": TRADINGVIEW_COLORS["text_secondary"], "textAlign": "center"})
+                ],
+            ),
+        ],
+        style={
+            "backgroundColor": TRADINGVIEW_COLORS["bg_secondary"],
+            "padding": "15px",
+            "borderRadius": "8px",
+            "border": f"1px solid {TRADINGVIEW_COLORS['border']}",
+            "marginTop": "15px",
+        },
+    )
+
+
 def create_layout():
     return dbc.Container(
         [
@@ -327,7 +380,7 @@ def create_layout():
                             create_timeframe_selector(),
                             html.Iframe(
                                 id="tv-chart",
-                                src="http://127.0.0.1:8051/chart",
+                                src=f"{API_BASE_URL}/chart",
                                 style={
                                     "width": "100%",
                                     "height": "75vh",
@@ -344,6 +397,7 @@ def create_layout():
                             create_statistics_panel(),
                             create_trade_history(),
                             create_backtest_panel(),
+                            create_ai_panel(),
                         ],
                         width=3,
                     ),

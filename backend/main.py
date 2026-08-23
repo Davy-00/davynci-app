@@ -24,8 +24,9 @@ from signal_manager import SignalManager
 from trade_history import trade_history
 from telegram_notifier import send_telegram, format_new_signal, format_signal_closed
 from session_notifier import session_watch_loop, announce_if_session_active, send_alert
+from ai_analyst import ai_configured, analyze_chart, GEMINI_MODEL
 from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig
-from indicators import calculate_all_indicators, ema_slope, is_price_near_ema
+from indicators import calculate_all_indicators, ema_slope, is_price_near_ema, detect_trend_lines
 from backtester import run_backtest, run_multi_backtest, run_vector_backtest
 from config.settings import APP_CONFIG, TRADING_CONFIG, TELEGRAM_CONFIG
 
@@ -411,8 +412,38 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
             indicators_dict['support_levels'] = h1_indicators['support_levels']
         if 'resistance_levels' in h1_indicators:
             indicators_dict['resistance_levels'] = h1_indicators['resistance_levels']
-        if 'trend_lines' in h1_indicators:
-            indicators_dict['trend_lines'] = h1_indicators['trend_lines']
+
+        # Trend lines drawn on the DISPLAYED timeframe, indices rebased to the
+        # tail(200) window the frontend receives (partial lines clipped).
+        offset = max(0, len(current_tf_df) - 200)
+        raw_lines = detect_trend_lines(
+            current_tf_df["high"], current_tf_df["low"], current_tf_df["close"],
+            lookback=15,
+        )
+        draw_lines = []
+        for tl in raw_lines:
+            s_i, e_i = int(tl.start_idx), int(tl.end_idx)
+            span = max(1, e_i - s_i)
+            slope = (tl.end_price - tl.start_price) / span
+
+            def _price_at(local_i):
+                return tl.start_price + slope * local_i
+
+            cs, ce = max(s_i - offset, 0), min(e_i - offset, 199)
+            if ce <= cs:
+                continue
+            draw_lines.append({
+                "type": tl.type,
+                "start_idx": cs,
+                "end_idx": ce,
+                "start_price": round(float(_price_at(cs)), 2),
+                "end_price": round(float(_price_at(ce)), 2),
+                "touches": tl.touches,
+                "strength": tl.strength,
+                "angle": tl.angle,
+                "is_broken": tl.is_broken,
+            })
+        indicators_dict['trend_lines'] = draw_lines
         if 'breakout' in h1_indicators:
             indicators_dict['breakout'] = h1_indicators['breakout'].tail(200).tolist()
         if 'bounce' in h1_indicators:
@@ -692,6 +723,29 @@ async def telegram_test():
         raise HTTPException(status_code=503, detail="Telegram not configured")
     await send_telegram("\U00002705 DAvynci backend online \u2014 signal alerts active.")
     return {"sent": True}
+
+
+class AIAnalyzeRequest(BaseModel):
+    timeframe: str = Field(default="M15", pattern="^(M5|M15|H1)$")
+    question: Optional[str] = Field(default=None, max_length=500)
+
+
+@app.get("/api/ai/status")
+async def ai_status():
+    return {"configured": ai_configured(), "model": GEMINI_MODEL}
+
+
+@app.post("/api/ai/analyze")
+async def ai_analyze(request: AIAnalyzeRequest):
+    if not ai_configured():
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
+    chart_data = calculate_chart_data(Timeframe(request.timeframe))
+    if "error" in chart_data:
+        raise HTTPException(status_code=502, detail=f"Market data unavailable: {chart_data['error']}")
+    result = analyze_chart(chart_data, request.question)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
 
 
 class BacktestRequest(BaseModel):

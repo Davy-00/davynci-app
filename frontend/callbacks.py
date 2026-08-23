@@ -1,7 +1,7 @@
 import json
 import os
 import dash
-from dash import Input, Output, State, callback, html, dcc
+from dash import Input, Output, State, callback, html, dcc, no_update
 import dash_bootstrap_components as dbc
 import requests
 from datetime import datetime
@@ -389,6 +389,44 @@ def format_multi_backtest_results(results):
         html.Div("Multi-Run Results:", style={"color": colors["text"], "fontSize": "12px", "fontWeight": "bold"}),
         *rows,
     ])
+
+
+@callback(
+    Output("ai-insight", "children"),
+    Input("btn-ai-analyze", "n_clicks"),
+    State("ai-question", "value"),
+    State("current-timeframe", "data"),
+    prevent_initial_call=True,
+)
+def get_ai_insight(n, question, timeframe):
+    if not n:
+        return no_update
+    try:
+        payload = {"timeframe": timeframe}
+        if question:
+            payload["question"] = question
+        response = requests.post(f"{API_BASE_URL}/api/ai/analyze", json=payload, timeout=55)
+        data = response.json()
+        if "detail" in data or "error" in data:
+            msg = data.get("detail") or data.get("error")
+            return html.P(f"⚠ {msg}", style={"color": TRADINGVIEW_COLORS["orange"], "fontSize": "12px"})
+        insight = data.get("insight", "")
+        paras = []
+        for block in insight.split("\n"):
+            b = block.strip()
+            if not b:
+                continue
+            color = TRADINGVIEW_COLORS.get("text", "#d1d4dc")
+            low = b.lower()
+            if low.startswith(("1)", "2)", "3)")) or b.startswith(("-", "•")):
+                paras.append(html.P(b, style={"color": color, "fontSize": "12px", "marginBottom": "6px"}))
+            else:
+                paras.append(html.P(b, style={"color": color, "fontSize": "12px", "margin": "0 0 6px"}))
+        model = data.get("model", "")
+        footer = html.P(f"— {model}", style={"color": TRADINGVIEW_COLORS["text_secondary"], "fontSize": "10px"})
+        return [*paras, footer]
+    except Exception as e:
+        return html.P(f"AI request failed: {type(e).__name__}", style={"color": TRADINGVIEW_COLORS["red"], "fontSize": "12px"})
 
 
 @callback(
