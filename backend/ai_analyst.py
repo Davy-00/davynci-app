@@ -8,7 +8,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 SYSTEM_PROMPT = (
     "You are a concise XAUUSD (gold) trading analyst embedded in a charting app. "
@@ -76,7 +76,10 @@ def analyze_chart(chart_data: dict, question: Optional[str] = None) -> dict:
             json={
                 "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
                 "contents": [{"parts": [{"text": user_text}]}],
-                "generationConfig": {"temperature": 0.4, "maxOutputTokens": 512},
+                "generationConfig": {
+                    "temperature": 0.4,
+                    "maxOutputTokens": 2048,
+                },
             },
             timeout=30,
         )
