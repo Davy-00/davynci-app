@@ -254,10 +254,17 @@ def create_history_table(trades):
     Input("interval-component", "n_intervals"),
     State("current-timeframe", "data"),
 )
+def _fetch_chart(timeframe: str):
+    """Fast path when backend awake; long-retry covers Render cold start."""
+    try:
+        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=8).json()
+    except Exception:
+        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=45).json()
+
+
 def update_dashboard(n, timeframe):
     try:
-        response = requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=35)
-        data = response.json()
+        data = _fetch_chart(timeframe)
     except Exception as e:
         return (
             "--", "--", "--",
