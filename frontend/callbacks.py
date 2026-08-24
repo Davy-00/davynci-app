@@ -235,6 +235,14 @@ def create_history_table(trades):
     )
 
 
+def _fetch_chart(timeframe: str):
+    """Fast path when backend awake; long-retry covers cold start."""
+    try:
+        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=8).json()
+    except Exception:
+        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=45).json()
+
+
 @callback(
     Output("live-bid", "children"),
     Output("live-ask", "children"),
@@ -254,14 +262,6 @@ def create_history_table(trades):
     Input("interval-component", "n_intervals"),
     State("current-timeframe", "data"),
 )
-def _fetch_chart(timeframe: str):
-    """Fast path when backend awake; long-retry covers Render cold start."""
-    try:
-        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=8).json()
-    except Exception:
-        return requests.get(f"{API_BASE_URL}/api/chart/{timeframe}", timeout=45).json()
-
-
 def update_dashboard(n, timeframe):
     try:
         data = _fetch_chart(timeframe)

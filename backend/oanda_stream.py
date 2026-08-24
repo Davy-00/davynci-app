@@ -154,7 +154,7 @@ class OandaPriceStream:
             symbol=OANDA_CONFIG.instrument,
             bid=bid,
             ask=ask,
-            spread=max(ask - bid, 0),
+            spread=round(max(ask - bid, 0), 2),
             time=snap["time"],
         )
 

@@ -167,7 +167,7 @@ async function fetchData() {
       const concl = a.conclusion || '';
       const isBull = concl.includes('BULL'); const isBear = concl.includes('BEAR');
       const c = isBull ? '#26a69a' : (isBear ? '#ef5350' : '#787b86');
-      sc.innerHTML = `<div style="font-size:13px;color:${c};text-align:center;padding:10px;">${concl || 'Waiting for clear setup...'}</div>`;
+      sc.innerHTML = `<div style="font-size:13px;color:${c};text-align:center;padding:10px;">${concl ? 'Bias only — no valid entry. ' + concl : 'Waiting for clear setup...'}</div>`;
     }
 
     // Technicals

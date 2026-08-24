@@ -35,22 +35,29 @@ def _post_message(text: str) -> bool:
         return False
 
 
-async def send_telegram(text: str) -> None:
+async def send_telegram(text: str) -> Optional[bool]:
     if not TELEGRAM_CONFIG.enabled:
-        return
+        return False
     try:
-        await asyncio.to_thread(_post_message, text)
+        return await asyncio.to_thread(_post_message, text)
     except Exception as e:
         logger.error(f"Telegram task error: {e}")
+        return False
+
+
+def _dir_str(direction) -> str:
+    # Signal.direction is a SignalDirection enum; .value gives "BUY"/"SELL".
+    # Fall back to str() for plain-string callers.
+    return direction.value if hasattr(direction, "value") else str(direction)
 
 
 def _dir_emoji(direction) -> str:
-    return "\U0001F7E2 BUY" if str(direction) == "BUY" else "\U0001F534 SELL"
+    return "\U0001F7E2 BUY" if _dir_str(direction) == "BUY" else "\U0001F534 SELL"
 
 
 def format_new_signal(s: Signal) -> str:
     lines = [
-        f"<b>{_dir_emoji(s.direction)} XAUUSD {s.direction}</b>",
+        f"<b>{_dir_emoji(s.direction)} \u2014 XAUUSD {_dir_str(s.direction)}</b>",
         "",
         f"\u2022 Entry: <code>{s.entry_price:.2f}</code>",
         f"\u2022 Stop Loss: <code>{s.stop_loss:.2f}</code>",
@@ -80,7 +87,7 @@ def format_signal_closed(s: Signal) -> str:
     )
     rr = f" | R:R: {s.rr_achieved:.2f}" if s.rr_achieved else ""
     lines = [
-        f"<b>{label} \u2014 XAUUSD {s.direction}</b>",
+        f"<b>{label} \u2014 XAUUSD {_dir_str(s.direction)}</b>",
         "",
         f"Entry: <code>{s.entry_price:.2f}</code> \u2192 Exit: <code>{(s.exit_price if s.exit_price is not None else 0):.2f}</code>",
         pnl_line + rr,

@@ -25,7 +25,7 @@ from trade_history import trade_history
 from telegram_notifier import send_telegram, format_new_signal, format_signal_closed
 from session_notifier import session_watch_loop, announce_if_session_active, send_alert
 from ai_analyst import ai_configured, analyze_chart, GEMINI_MODEL
-from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig
+from schemas import Timeframe, LivePrice, Signal, StrategyType, BacktestConfig, SignalDirection
 from indicators import calculate_all_indicators, ema_slope, is_price_near_ema, detect_trend_lines
 from backtester import run_backtest, run_multi_backtest, run_vector_backtest
 from config.settings import APP_CONFIG, TRADING_CONFIG, TELEGRAM_CONFIG
@@ -290,59 +290,6 @@ def compute_simple_analysis(h1_df: pd.DataFrame, m15_df: pd.DataFrame, m5_df: pd
         return {}
 
 
-def generate_trade_suggestion(analysis: dict, tf_df: pd.DataFrame, live_price: Optional[LivePrice]) -> Optional[dict]:
-    conclusion = analysis.get("conclusion", "")
-    buy_score = analysis.get("buy_score", 0)
-    sell_score = analysis.get("sell_score", 0)
-    
-    if "BULLISH" in conclusion and buy_score >= 3:
-        direction = "BUY"
-        side = "Long"
-    elif "BEARISH" in conclusion and sell_score >= 3:
-        direction = "SELL"
-        side = "Short"
-    else:
-        return None
-    
-    entry = live_price.bid if live_price else (tf_df['close'].iloc[-1] if tf_df is not None and not tf_df.empty else None)
-    if entry is None:
-        return None
-    
-    atr_series = calculate_all_indicators(tf_df, 'M15').get('atr', pd.Series([0]))
-    atr_val = float(atr_series.iloc[-1]) if len(atr_series) > 0 else 0
-    if atr_val == 0:
-        atr_val = entry * 0.005  # fallback: 0.5% of price
-    
-    sl_dist = atr_val * 1.5
-    
-    if direction == "BUY":
-        sl = entry - sl_dist
-        tp1 = entry + sl_dist * 2.0
-        tp2 = entry + sl_dist * 3.0
-    else:
-        sl = entry + sl_dist
-        tp1 = entry - sl_dist * 2.0
-        tp2 = entry - sl_dist * 3.0
-    
-    risk = abs(entry - sl)
-    rr1 = abs(tp1 - entry) / risk if risk > 0 else 0
-    rr2 = abs(tp2 - entry) / risk if risk > 0 else 0
-    
-    return {
-        "direction": direction,
-        "side": side,
-        "entry": round(entry, 2),
-        "stop_loss": round(sl, 2),
-        "tp1": round(tp1, 2),
-        "tp2": round(tp2, 2),
-        "risk": round(risk, 2),
-        "rr1": round(rr1, 2),
-        "rr2": round(rr2, 2),
-        "bias_score": f"{buy_score}-{sell_score}",
-        "reasoning": analysis.get("narrative", "").split("\n")[:3],
-    }
-
-
 def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
     dc = get_data_client()
     
@@ -418,7 +365,7 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
         offset = max(0, len(current_tf_df) - 200)
         raw_lines = detect_trend_lines(
             current_tf_df["high"], current_tf_df["low"], current_tf_df["close"],
-            lookback=15,
+            lookback=8,
         )
         draw_lines = []
         for tl in raw_lines:
@@ -427,7 +374,10 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
             slope = (tl.end_price - tl.start_price) / span
 
             def _price_at(local_i):
-                return tl.start_price + slope * local_i
+                # local_i is window-relative; convert to absolute bar index
+                # so lines anchored before the visible window extrapolate
+                # correctly instead of being shifted.
+                return tl.start_price + slope * ((local_i + offset) - s_i)
 
             cs, ce = max(s_i - offset, 0), min(e_i - offset, 199)
             if ce <= cs:
@@ -443,8 +393,8 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
                 "angle": tl.angle,
                 "is_broken": tl.is_broken,
             })
-        draw_lines.sort(key=lambda d: d.get("strength") or 0, reverse=True)
-        draw_lines = draw_lines[:2]
+        draw_lines.sort(key=lambda d: (d.get("is_broken"), -(d.get("strength") or 0)))
+        draw_lines = draw_lines[:3]
         indicators_dict['trend_lines'] = draw_lines
         if 'breakout' in h1_indicators:
             indicators_dict['breakout'] = h1_indicators['breakout'].tail(200).tolist()
@@ -478,8 +428,27 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
         history_trades = trade_history.get_all_trades()
         analysis = compute_simple_analysis(h1_df, m15_df, m5_df)
         
-        # Generate trade suggestion from analysis
-        suggested_trade = generate_trade_suggestion(analysis, current_tf_df, live_price)
+        # Auto Setup card mirrors the REAL strategy: it only appears when
+        # scan_for_signal (session + H1 trend + M15 pullback + M5 trigger)
+        # would actually fire a signal. No more always-on heuristic cards.
+        sig, _scan_debug = scan_for_signal(h1_df, m15_df, m5_df)
+        suggested_trade = None
+        if sig is not None:
+            risk = abs(sig.entry_price - sig.stop_loss)
+            suggested_trade = {
+                "direction": sig.direction.value,
+                "side": "Long" if sig.direction == SignalDirection.BUY else "Short",
+                "entry": round(sig.entry_price, 2),
+                "stop_loss": round(sig.stop_loss, 2),
+                "tp1": round(sig.tp1, 2),
+                "tp2": round(sig.tp2, 2),
+                "risk": round(risk, 2),
+                "rr1": round(abs(sig.tp1 - sig.entry_price) / risk, 2) if risk else 0,
+                "rr2": round(abs(sig.tp2 - sig.entry_price) / risk, 2) if risk else 0,
+                "strategy_type": sig.strategy_type.value,
+                "bias_score": f"{analysis.get('buy_score', 0)}-{analysis.get('sell_score', 0)}",
+                "reasoning": (analysis.get("narrative", "") or "").split("\n")[:3],
+            }
         
         source = dc.get_data_source_label() if hasattr(dc, 'get_data_source_label') else type(dc).__name__
         instrument = "XAUUSD"
@@ -503,30 +472,36 @@ def calculate_chart_data(timeframe: Timeframe = Timeframe.M15) -> dict:
         return {"error": str(e)}
 
 
+def _scan_for_signal_blocking():
+    dc = get_data_client()
+    h1_df = dc.get_candles_df(Timeframe.H1, 200)
+    m15_df = dc.get_candles_df(Timeframe.M15, 200)
+    m5_df = dc.get_candles_df(Timeframe.M5, 200)
+
+    if h1_df is None or m15_df is None or m5_df is None:
+        return None
+
+    return scan_for_signal(h1_df, m15_df, m5_df)
+
+
 async def scan_and_generate_signals():
     if not signal_manager.can_generate_signal():
         return
-    
-    dc = get_data_client()
-    
+
     try:
-        h1_df = dc.get_candles_df(Timeframe.H1, 200)
-        m15_df = dc.get_candles_df(Timeframe.M15, 200)
-        m5_df = dc.get_candles_df(Timeframe.M5, 200)
-        
-        if h1_df is None or m15_df is None or m5_df is None:
-            return
-        
-        signal, debug_info = scan_for_signal(h1_df, m15_df, m5_df)
-        
-        if signal:
-            signal_manager.add_signal(signal)
-            logger.info(f"New signal generated: {signal.direction} @ {signal.entry_price:.2f}")
-            await broadcast_message({
-                "type": "NEW_SIGNAL",
-                "signal": signal_to_dict(signal),
-            })
-            await send_telegram(format_new_signal(signal))
+        result = await asyncio.to_thread(_scan_for_signal_blocking)
+
+        if result is not None:
+            signal, debug_info = result
+
+            if signal is not None:
+                signal_manager.add_signal(signal)
+                logger.info(f"New signal generated: {signal.direction} @ {signal.entry_price:.2f}")
+                await broadcast_message({
+                    "type": "NEW_SIGNAL",
+                    "signal": signal_to_dict(signal),
+                })
+                await send_telegram(format_new_signal(signal))
     except Exception as e:
         logger.error(f"Error scanning for signals: {e}")
 
@@ -548,13 +523,24 @@ async def data_updater():
     while True:
         try:
             await scan_and_generate_signals()
-            
-            data = calculate_chart_data(Timeframe.M15)
-            await broadcast_message({
-                "type": "UPDATE",
-                "data": data,
-            })
-            
+
+            # Track open-signal PnL / TP-SL even when no dashboard clients
+            active_signal = signal_manager.get_active_signal()
+            if active_signal is not None:
+                dc = get_data_client()
+                live_price = await asyncio.to_thread(dc.get_live_price)
+                if live_price:
+                    signal_manager.update_signal_pnl(live_price.bid)
+                    signal_manager.check_tp_sl(live_price.bid)
+
+            # Heavy chart rebuild only pays off when someone is listening
+            if active_connections:
+                data = await asyncio.to_thread(calculate_chart_data, Timeframe.M15)
+                await broadcast_message({
+                    "type": "UPDATE",
+                    "data": data,
+                })
+
             await asyncio.sleep(APP_CONFIG.chart_update_interval_ms / 1000)
         except Exception as e:
             logger.error(f"Error in data updater: {e}")
@@ -616,14 +602,14 @@ async def get_chart(timeframe: str):
         tf = Timeframe(timeframe.upper())
     except ValueError:
         return {"error": "Invalid timeframe. Use M5, M15, or H1"}
-    
-    return calculate_chart_data(tf)
+
+    return await asyncio.to_thread(calculate_chart_data, tf)
 
 
 @app.get("/api/price")
 async def get_price():
     dc = get_data_client()
-    price = dc.get_live_price()
+    price = await asyncio.to_thread(dc.get_live_price)
     if price:
         return price.model_dump()
     return {"error": "Failed to get price"}
@@ -668,23 +654,23 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info(f"WebSocket client connected. Total: {len(active_connections)}")
     
     try:
-        data = calculate_chart_data(Timeframe.M15)
+        data = await asyncio.to_thread(calculate_chart_data, Timeframe.M15)
         await websocket.send_json({
             "type": "INIT",
             "data": data,
         })
-        
+
         while True:
             message = await websocket.receive_text()
             try:
                 msg = json.loads(message)
                 msg_type = msg.get("type", "")
-                
+
                 if msg_type == "SUBSCRIBE":
                     tf = msg.get("timeframe", "M15")
                     try:
                         timeframe = Timeframe(tf.upper())
-                        data = calculate_chart_data(timeframe)
+                        data = await asyncio.to_thread(calculate_chart_data, timeframe)
                         await websocket.send_json({
                             "type": "UPDATE",
                             "data": data,
@@ -741,10 +727,10 @@ async def ai_status():
 async def ai_analyze(request: AIAnalyzeRequest):
     if not ai_configured():
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
-    chart_data = calculate_chart_data(Timeframe(request.timeframe))
+    chart_data = await asyncio.to_thread(calculate_chart_data, Timeframe(request.timeframe))
     if "error" in chart_data:
         raise HTTPException(status_code=502, detail=f"Market data unavailable: {chart_data['error']}")
-    result = analyze_chart(chart_data, request.question)
+    result = await asyncio.to_thread(analyze_chart, chart_data, request.question)
     if "error" in result:
         raise HTTPException(status_code=502, detail=result["error"])
     return result
@@ -820,11 +806,12 @@ async def backtest(request: Optional[BacktestRequest] = None):
         if req.fixed_units is None
         else None
     )
-    h1, m15, m5 = _fetch_backtest_frames(req.days)
+    h1, m15, m5 = await asyncio.to_thread(_fetch_backtest_frames, req.days)
     if h1 is None:
         raise HTTPException(status_code=503, detail="Data source unavailable")
     entry_start = datetime.now(timezone.utc) - timedelta(days=req.days)
-    res = run_vector_backtest(
+    res = await asyncio.to_thread(
+        run_vector_backtest,
         h1, m15, m5,
         sl_mult=cfg.sl_atr_multiplier,
         tp1_rr=cfg.tp1_rr,
@@ -850,7 +837,7 @@ async def backtest_multi(request: Optional[BacktestRequest] = None):
         if req.fixed_units is None
         else None
     )
-    h1, m15, m5 = _fetch_backtest_frames(req.days)
+    h1, m15, m5 = await asyncio.to_thread(_fetch_backtest_frames, req.days)
     if h1 is None:
         raise HTTPException(status_code=503, detail="Data source unavailable")
     param_sets = [
@@ -864,7 +851,8 @@ async def backtest_multi(request: Optional[BacktestRequest] = None):
     results = []
     entry_start = datetime.now(timezone.utc) - timedelta(days=req.days)
     for overrides in param_sets:
-        res = run_vector_backtest(
+        res = await asyncio.to_thread(
+            run_vector_backtest,
             h1, m15, m5,
             sl_mult=overrides.get("sl_mult", cfg.sl_atr_multiplier),
             tp1_rr=overrides.get("tp1_rr", cfg.tp1_rr),
@@ -886,7 +874,7 @@ async def backtest_status():
     dc = get_data_client()
     bars_available = 0
     if dc.connected:
-        df = dc.get_candles_df(Timeframe.M5, 1)
+        df = await asyncio.to_thread(dc.get_candles_df, Timeframe.M5, 1)
         if df is not None:
             bars_available = 500
     return {

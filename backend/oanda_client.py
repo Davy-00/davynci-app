@@ -125,7 +125,7 @@ class OandaClient:
                 symbol=self.instrument,
                 bid=bid,
                 ask=ask,
-                spread=max(ask - bid, 0),
+                spread=round(max(ask - bid, 0), 2),
                 time=t,
             )
             self._last_price_time = now

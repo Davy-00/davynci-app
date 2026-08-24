@@ -57,78 +57,171 @@ def detect_trend_lines(
     high: pd.Series,
     low: pd.Series,
     close: pd.Series,
-    lookback: int = 15,
-    min_touches: int = 2,
+    lookback: int = 10,
+    min_touches: int = 3,
 ) -> List[TrendLine]:
-    high_idx, low_idx = find_swing_points(high, low, lookback)
-    result: List[TrendLine] = []
+    """Pivot-anchored trend lines with ATR-scaled touch tolerance.
+
+    - Anchors are swing points (argrelextrema, order=lookback).
+    - The segment between the two anchor pivots must NOT be violated
+      beyond an ATR-scaled band (otherwise the "line" cuts through candles).
+    - Touches after the second anchor are counted as distinct clusters
+      (consecutive bars near the line count once).
+    - A line needs at least `min_touches` total contacts to be reported.
+    - Unbroken lines are projected to the most recent bar so the drawn
+      level reflects where support/resistance sits NOW.
+    """
     n = len(close)
+    if n < lookback * 3:
+        return []
 
-    # Detect uptrend lines (connecting higher lows)
-    if len(low_idx) >= 3:
-        for i in range(len(low_idx) - 2):
-            idx1 = low_idx[i]
-            for j in range(i + 1, len(low_idx) - 1):
-                idx2 = low_idx[j]
-                p1, p2 = low.iloc[idx1], low.iloc[idx2]
-                if p2 <= p1:
-                    continue
-                slope = (p2 - p1) / (idx2 - idx1)
-                angle = float(np.degrees(np.arctan(slope)))
-                if angle < 5 or angle > 70:
-                    continue
-                touches = 2
-                for k in range(j + 1, len(low_idx)):
-                    idx3 = low_idx[k]
-                    expected = p1 + slope * (idx3 - idx1)
-                    if abs(low.iloc[idx3] - expected) < 2.0:
-                        touches += 1
-                        idx2 = idx3
-                        p2 = low.iloc[idx3]
-                is_broken = bool(close.iloc[-1] < p1 + slope * (n - 1 - idx1) - 1.0)
-                strength = touches / max(n - idx1, 1) * 100
-                if touches >= min_touches:
-                    result.append(TrendLine(
-                        type='uptrend',
-                        start_idx=idx1, end_idx=idx2,
-                        start_price=float(p1), end_price=float(p2),
-                        touches=touches, strength=round(strength, 2),
-                        angle=round(angle, 1), is_broken=bool(is_broken),
-                    ))
+    atr14 = atr(high, low, close, 14)
+    tol = atr14.bfill().fillna(1.0) * 0.30
+    atr_med = float(atr14.dropna().median()) if not atr14.dropna().empty else 1.0
 
-    # Detect downtrend lines (connecting lower highs)
-    if len(high_idx) >= 3:
-        for i in range(len(high_idx) - 2):
-            idx1 = high_idx[i]
-            for j in range(i + 1, len(high_idx) - 1):
-                idx2 = high_idx[j]
-                p1, p2 = high.iloc[idx1], high.iloc[idx2]
-                if p2 >= p1:
-                    continue
-                slope = (p2 - p1) / (idx2 - idx1)
-                angle = float(np.degrees(np.arctan(abs(slope))))
-                if angle < 5 or angle > 70:
-                    continue
-                touches = 2
-                for k in range(j + 1, len(high_idx)):
-                    idx3 = high_idx[k]
-                    expected = p1 + slope * (idx3 - idx1)
-                    if abs(high.iloc[idx3] - expected) < 2.0:
-                        touches += 1
-                        idx2 = idx3
-                        p2 = high.iloc[idx3]
-                is_broken = bool(close.iloc[-1] > p1 + slope * (n - 1 - idx1) + 1.0)
-                strength = touches / max(n - idx1, 1) * 100
-                if touches >= min_touches:
-                    result.append(TrendLine(
-                        type='downtrend',
-                        start_idx=idx1, end_idx=idx2,
-                        start_price=float(p1), end_price=float(p2),
-                        touches=touches, strength=round(strength, 2),
-                        angle=round(angle, 1), is_broken=bool(is_broken),
-                    ))
+    high_idx, low_idx = find_swing_points(high, low, lookback)
 
-    result.sort(key=lambda x: x.strength, reverse=True)
+    def _clustered_touches(idx_start: int, idx_end: int, line_fn, series: pd.Series, kind: str) -> int:
+        touches = 0
+        in_cluster = False
+        for t in range(idx_start, idx_end):
+            expected = line_fn(t - idx_start)
+            band = float(tol.iloc[t])
+            v = float(series.iloc[t])
+            near = abs(v - expected) <= band
+            if near and not in_cluster:
+                touches += 1
+                in_cluster = True
+            elif not near:
+                in_cluster = False
+        return touches
+
+    def build(pivots: List[int], series: pd.Series, kind: str) -> List[TrendLine]:
+        out: List[TrendLine] = []
+        fallback: List[TrendLine] = []
+        for a in range(len(pivots) - 1):
+            for b in range(a + 1, len(pivots)):
+                i1, i2 = pivots[a], pivots[b]
+                if i2 - i1 < lookback:
+                    continue
+                p1, p2 = float(series.iloc[i1]), float(series.iloc[i2])
+                slope = (p2 - p1) / (i2 - i1)
+                if kind == 'uptrend' and slope <= 0:
+                    continue
+                if kind == 'downtrend' and slope >= 0:
+                    continue
+
+                # No violation between anchors (band-scaled)
+                viol = False
+                for t in range(i1, i2 + 1):
+                    expected = p1 + slope * (t - i1)
+                    band = float(tol.iloc[t])
+                    v = float(series.iloc[t])
+                    if kind == 'uptrend' and v < expected - band:
+                        viol = True
+                        break
+                    if kind == 'downtrend' and v > expected + band:
+                        viol = True
+                        break
+                if viol:
+                    continue
+
+                touches = 2 + _clustered_touches(i2 + 1, n, lambda k: p1 + slope * (i2 - i1 + k), series, kind)
+
+                # A close beyond the line by >1.25*ATR at ANY point after
+                # formation means the line was broken (not just churn/wicks).
+                close_arr = close.values[i2:]
+                proj_arr = p1 + slope * (np.arange(i2, n) - i1)
+                bands = tol.values[i2:] * 4.17  # 0.30*ATR * 4.17 = 1.25*ATR
+                pierced = (close_arr < proj_arr - bands) if kind == 'uptrend' else (close_arr > proj_arr + bands)
+
+                proj_last = p1 + slope * (n - 1 - i1)
+                band_last = float(tol.iloc[-1])
+                if kind == 'uptrend':
+                    is_broken = bool(pierced.any() or float(close.iloc[-1]) < proj_last - band_last)
+                else:
+                    is_broken = bool(pierced.any() or float(close.iloc[-1]) > proj_last + band_last)
+
+                # Drop lines broken long ago (stale structure); keep only
+                # recently broken ones so the break level stays visible.
+                if is_broken:
+                    if pierced.any():
+                        first_pierce = i2 + int(np.argmax(pierced))
+                    else:
+                        first_pierce = n - 1
+                    recent_window = max(30, n // 10)
+                    if n - first_pierce > recent_window:
+                        continue
+
+                # Drop stale lines whose projected level is nowhere near
+                # current price (>20 ATR away) — pure chart clutter.
+                if abs(proj_last - float(close.iloc[-1])) > 20 * atr_med:
+                    continue
+
+                if touches < min_touches:
+                    # Clean 2-point line: keep as fallback candidate only.
+                    if not is_broken:
+                        span_frac = (i2 - i1) / max(n - 1, 1)
+                        recency = i2 / max(n - 1, 1)
+                        fallback.append(TrendLine(
+                            type=kind,
+                            start_idx=i1,
+                            end_idx=n - 1,
+                            start_price=round(p1, 4),
+                            end_price=round(proj_last, 4),
+                            touches=touches,
+                            strength=round(24 + span_frac * 30 + recency * 20, 2),
+                            angle=round(float(np.degrees(np.arctan(slope))), 2),
+                            is_broken=False,
+                        ))
+                    continue
+
+                span_frac = (i2 - i1) / max(n - 1, 1)
+                recency = i2 / max(n - 1, 1)
+                strength = round(touches * 12 + span_frac * 30 + recency * 20, 2)
+
+                out.append(TrendLine(
+                    type=kind,
+                    start_idx=i1,
+                    end_idx=n - 1,
+                    start_price=round(p1, 4),
+                    end_price=round(proj_last, 4),
+                    touches=touches,
+                    strength=strength,
+                    angle=round(float(np.degrees(np.arctan(slope))), 2),
+                    is_broken=is_broken,
+                ))
+        return out, fallback
+
+    up, up_fallback = build(low_idx, low, 'uptrend')
+    down, down_fallback = build(high_idx, high, 'downtrend')
+
+    def _dedup(cands: List[TrendLine]) -> List[TrendLine]:
+        # Different anchor pairs on the same structure produce overlapping
+        # lines. Greedily keep best (unbroken preferred, then strongest);
+        # reject lines whose current level and slope closely match an
+        # already-accepted one.
+        kept: List[TrendLine] = []
+        for tl in sorted(cands, key=lambda x: (x.is_broken, -x.strength)):
+            slope_tl = (tl.end_price - tl.start_price) / max(tl.end_idx - tl.start_idx, 1)
+            dup = False
+            for k in kept:
+                slope_k = (k.end_price - k.start_price) / max(k.end_idx - k.start_idx, 1)
+                if abs(tl.end_price - k.end_price) < atr_med and \
+                   abs(slope_tl - slope_k) < atr_med / 50:
+                    dup = True
+                    break
+            if not dup:
+                kept.append(tl)
+        return kept
+
+    result = _dedup(up + down)
+    # If strict multi-touch detection found little structure, top up with
+    # clean 2-point fallback lines so the chart isn't empty.
+    if len(result) < 3:
+        result = _dedup(result + up_fallback + down_fallback)
+
+    result.sort(key=lambda x: (x.is_broken, -x.strength))
     return result[:6]
 
 
@@ -263,8 +356,7 @@ def calculate_all_indicators(df: pd.DataFrame, timeframe: str) -> dict:
         result['support_levels'] = supports
         result['resistance_levels'] = resistances
 
-        all_lines = high.rolling(center=False, window=1).max()
-        trend_lines = detect_trend_lines(high, low, close, lookback=15)
+        trend_lines = detect_trend_lines(high, low, close, lookback=8)
         result['trend_lines'] = [
             {
                 'type': tl.type,

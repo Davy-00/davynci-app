@@ -54,10 +54,10 @@ class TradingConfig:
     swing_lookback: int = 20
     ema_200_slope_lookback: int = 10
     price_ema_threshold_pct: float = 0.3
-    sl_atr_multiplier: float = 1.5
-    tp1_rr: float = 3.0
-    tp2_rr: float = 4.0
-    rsi_cross_bars: int = 3
+    sl_atr_multiplier: float = 3.0
+    tp1_rr: float = 2.0
+    tp2_rr: float = 6.0
+    rsi_cross_bars: int = 2
     require_engulfing: bool = False
     session_windows: List[tuple] = None
 
@@ -66,7 +66,6 @@ class TradingConfig:
             self.ema_periods = [21, 50, 200]
         if self.session_windows is None:
             self.session_windows = [
-                (7, 10),    # London 07:00-10:00 GMT
                 (12, 16),   # New York 12:00-16:00 GMT
             ]
 
